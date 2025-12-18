@@ -1,26 +1,31 @@
 "use client";
 
 import { FormEvent, useMemo, useState } from "react";
-import Image from "next/image";
 import Link from "next/link";
-import { useCallback, useMemo, useState } from "react";
 import {
-  useWidgetProps,
-  useMaxHeight,
-  useDisplayMode,
-  useRequestDisplayMode,
-  useIsChatGptApp,
   useCallTool,
+  useDisplayMode,
+  useMaxHeight,
+  useOpenExternal,
+  useRequestDisplayMode,
+  useWidgetProps,
   useWidgetState,
 } from "./hooks";
 
 type ResumeFormState = {
   name: string;
-  role: string;
+  email: string;
+  headline: string;
   summary: string;
-  bulletPoints: string;
+  company: string;
+  role: string;
+  startDate: string;
+  endDate: string;
+  skills: string;
+  achievements: string;
   previewHtml: string | null;
   pdfUrl: string | null;
+  compiledAt: string | null;
 };
 
 type ResumeToolResponse = {
@@ -28,50 +33,72 @@ type ResumeToolResponse = {
     structuredContent?: {
       previewHtml?: string;
       pdfUrl?: string;
+      metadata?: {
+        generatedAt?: string;
+      };
     };
+  };
+};
+
+type PreviewWidgetProps = {
+  previewHtml?: string;
+  pdfUrl?: string;
+  metadata?: {
+    generatedAt?: string;
   };
 };
 
 const DEFAULT_RESUME_STATE: ResumeFormState = {
   name: "",
-  role: "",
+  email: "",
+  headline: "",
   summary: "",
-  bulletPoints: "",
+  company: "",
+  role: "",
+  startDate: "",
+  endDate: "",
+  skills: "",
+  achievements: "",
   previewHtml: null,
   pdfUrl: null,
-  useOpenExternal,
-  useCallTool,
-} from "./hooks";
-
-type PreviewWidgetProps = {
-  previewHtml?: string;
-  pdfUrl?: string;
-  compiledAt?: string;
-  toolName?: string;
-  toolArgs?: Record<string, unknown>;
+  compiledAt: null,
 };
 
+const parseList = (value: string, separator: RegExp) =>
+  value
+    .split(separator)
+    .map((entry) => entry.trim())
+    .filter(Boolean);
+
 export default function Home() {
-  const { previewHtml, pdfUrl, compiledAt, toolName, toolArgs } =
-    useWidgetProps<PreviewWidgetProps>({});
+  const widgetProps = useWidgetProps<PreviewWidgetProps>({});
   const maxHeight = useMaxHeight() ?? undefined;
   const displayMode = useDisplayMode();
   const requestDisplayMode = useRequestDisplayMode();
-  const isChatGptApp = useIsChatGptApp();
   const callTool = useCallTool();
-  const [resumeState, setResumeState] = useWidgetState<ResumeFormState>(
-    DEFAULT_RESUME_STATE
-  );
+  const openExternal = useOpenExternal();
+  const [resumeState, setResumeState] = useWidgetState<ResumeFormState>(() => ({
+    ...DEFAULT_RESUME_STATE,
+    previewHtml: widgetProps.previewHtml ?? DEFAULT_RESUME_STATE.previewHtml,
+    pdfUrl: widgetProps.pdfUrl ?? DEFAULT_RESUME_STATE.pdfUrl,
+    compiledAt: widgetProps.metadata?.generatedAt ?? DEFAULT_RESUME_STATE.compiledAt,
+  }));
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  const name = toolOutput?.result?.structuredContent?.name || toolOutput?.name;
   const formState = useMemo(
     () => resumeState ?? DEFAULT_RESUME_STATE,
     [resumeState]
   );
 
-  const updateFormField = <K extends keyof ResumeFormState>(key: K) =>
+  const formattedCompiledAt = useMemo(() => {
+    if (!formState.compiledAt) return null;
+    const compiledDate = new Date(formState.compiledAt);
+    return compiledDate.toLocaleString();
+  }, [formState.compiledAt]);
+
+  const updateFormField =
+    <K extends keyof ResumeFormState>(key: K) =>
     (value: ResumeFormState[K]) =>
       setResumeState((previous) => ({
         ...(previous ?? DEFAULT_RESUME_STATE),
@@ -83,25 +110,34 @@ export default function Home() {
     setError(null);
     setIsSubmitting(true);
 
-    // Clear the previous output so the UI reflects the new pending request.
     setResumeState((previous) => ({
       ...(previous ?? DEFAULT_RESUME_STATE),
       previewHtml: null,
       pdfUrl: null,
     }));
 
-    try {
-      const parsedBulletPoints = formState.bulletPoints
-        .split(/\r?\n/)
-        .map((line) => line.trim())
-        .filter(Boolean);
+    const skills = parseList(formState.skills, /,|\r?\n/);
+    const achievements = parseList(formState.achievements, /\r?\n/);
 
-      const response = await callTool("generate_resume", {
-        name: formState.name,
-        role: formState.role,
-        summary: formState.summary,
-        bulletPoints: parsedBulletPoints,
-      });
+    try {
+      const payload = {
+        name: formState.name.trim(),
+        email: formState.email.trim() || undefined,
+        headline: formState.headline.trim() || undefined,
+        summary: formState.summary.trim() || undefined,
+        skills: skills.length ? skills : undefined,
+        experience: [
+          {
+            company: formState.company.trim(),
+            role: formState.role.trim(),
+            startDate: formState.startDate.trim() || undefined,
+            endDate: formState.endDate.trim() || undefined,
+            achievements: achievements.length ? achievements : undefined,
+          },
+        ],
+      };
+
+      const response = await callTool("generate_resume", payload);
 
       if (!response) {
         setError("Tool invocation is unavailable in this environment.");
@@ -119,12 +155,22 @@ export default function Home() {
         ...(previous ?? DEFAULT_RESUME_STATE),
         previewHtml: structuredContent.previewHtml ?? null,
         pdfUrl: structuredContent.pdfUrl ?? null,
+        compiledAt:
+          structuredContent.metadata?.generatedAt ??
+          previous?.compiledAt ??
+          new Date().toISOString(),
       }));
     } catch (err) {
       console.error(err);
       setError("Failed to generate resume. Please try again.");
     } finally {
       setIsSubmitting(false);
+    }
+  };
+
+  const handleOpenExternal = () => {
+    if (formState.pdfUrl) {
+      openExternal(formState.pdfUrl);
     }
   };
 
@@ -173,33 +219,31 @@ export default function Home() {
                 Compiled at {formattedCompiledAt}
               </p>
             )}
+            <p className="text-sm text-slate-600 dark:text-slate-300">
+              The form builds the <code className="font-mono">generate_resume</code> payload with an{" "}
+              <strong>experience</strong> array (company, role, optional dates and achievements) and optional{" "}
+              <strong>skills</strong>.
+            </p>
           </div>
           <div className="flex flex-wrap gap-2">
             <a
               className={`inline-flex items-center justify-center rounded-lg border border-slate-300 bg-white px-4 py-2 text-sm font-medium text-slate-800 shadow-sm transition hover:bg-slate-50 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-100 dark:hover:bg-slate-800 ${
-                pdfUrl ? "" : "pointer-events-none opacity-60"
+                formState.pdfUrl ? "" : "pointer-events-none opacity-60"
               }`}
-              href={pdfUrl || "#"}
+              href={formState.pdfUrl || "#"}
               target="_blank"
               rel="noopener noreferrer"
-              download={pdfUrl ? "" : undefined}
-              aria-disabled={!pdfUrl}
+              download={formState.pdfUrl ? "" : undefined}
+              aria-disabled={!formState.pdfUrl}
             >
               Download PDF
             </a>
             <button
               className="inline-flex items-center justify-center rounded-lg border border-slate-300 bg-white px-4 py-2 text-sm font-medium text-slate-800 shadow-sm transition hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-60 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-100 dark:hover:bg-slate-800"
               onClick={handleOpenExternal}
-              disabled={!pdfUrl}
+              disabled={!formState.pdfUrl}
             >
               Open in new tab
-            </button>
-            <button
-              className="inline-flex items-center justify-center rounded-lg bg-slate-900 px-4 py-2 text-sm font-medium text-white shadow-sm transition hover:bg-slate-800 disabled:cursor-not-allowed disabled:opacity-60 dark:bg-slate-100 dark:text-slate-900 dark:hover:bg-slate-200"
-              onClick={handleRegenerate}
-              disabled={!toolName || isRegenerating}
-            >
-              {isRegenerating ? "Regenerating..." : "Regenerate"}
             </button>
           </div>
         </div>
@@ -211,7 +255,8 @@ export default function Home() {
                 Generate a resume preview
               </p>
               <p className="text-sm text-slate-600 dark:text-slate-300">
-                Fill in the details below to call the <code className="font-mono">generate_resume</code> MCP tool.
+                Provide the fields expected by the <code className="font-mono">generate_resume</code> MCP tool.
+                Roles and companies are mapped to the tool&apos;s <code className="font-mono">experience</code> array.
               </p>
             </div>
             <span className="inline-flex items-center rounded-full bg-slate-100 dark:bg-slate-800 px-3 py-1 text-xs font-medium text-slate-700 dark:text-slate-200">
@@ -232,21 +277,44 @@ export default function Home() {
                 />
               </label>
               <label className="flex flex-col gap-1 text-sm text-slate-700 dark:text-slate-200">
-                Role
+                Email (optional)
                 <input
-                  required
-                  value={formState.role}
-                  onChange={(event) => updateFormField("role")(event.target.value)}
+                  value={formState.email}
+                  onChange={(event) => updateFormField("email")(event.target.value)}
                   className="rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 px-3 py-2 text-sm text-slate-900 dark:text-slate-100 shadow-inner"
-                  placeholder="Senior Software Engineer"
+                  placeholder="ada@example.com"
+                  type="email"
                 />
               </label>
             </div>
 
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+              <label className="flex flex-col gap-1 text-sm text-slate-700 dark:text-slate-200">
+                Headline (optional)
+                <input
+                  value={formState.headline}
+                  onChange={(event) => updateFormField("headline")(event.target.value)}
+                  className="rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 px-3 py-2 text-sm text-slate-900 dark:text-slate-100 shadow-inner"
+                  placeholder="Staff Engineer • Data Platforms"
+                />
+              </label>
+              <label className="flex flex-col gap-1 text-sm text-slate-700 dark:text-slate-200">
+                Skills (optional)
+                <input
+                  value={formState.skills}
+                  onChange={(event) => updateFormField("skills")(event.target.value)}
+                  className="rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 px-3 py-2 text-sm text-slate-900 dark:text-slate-100 shadow-inner"
+                  placeholder="Distributed systems, Leadership, SQL"
+                />
+                <span className="text-xs text-slate-500 dark:text-slate-400">
+                  Comma- or line-separated list mapped to <code className="font-mono">skills</code>.
+                </span>
+              </label>
+            </div>
+
             <label className="flex flex-col gap-1 text-sm text-slate-700 dark:text-slate-200">
-              Summary
+              Summary (optional)
               <textarea
-                required
                 value={formState.summary}
                 onChange={(event) => updateFormField("summary")(event.target.value)}
                 className="rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 px-3 py-2 text-sm text-slate-900 dark:text-slate-100 shadow-inner min-h-[96px]"
@@ -254,16 +322,70 @@ export default function Home() {
               />
             </label>
 
-            <label className="flex flex-col gap-1 text-sm text-slate-700 dark:text-slate-200">
-              Bullet points
-              <textarea
-                value={formState.bulletPoints}
-                onChange={(event) => updateFormField("bulletPoints")(event.target.value)}
-                className="rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 px-3 py-2 text-sm text-slate-900 dark:text-slate-100 shadow-inner min-h-[120px]"
-                placeholder={`Lead engineer for X\nImproved system reliability by 20%\nMentored junior developers`}
-              />
-              <span className="text-xs text-slate-500 dark:text-slate-400">One point per line.</span>
-            </label>
+            <div className="space-y-3 rounded-lg border border-slate-200 dark:border-slate-800 p-4">
+              <div className="flex items-center justify-between gap-2">
+                <p className="text-sm font-semibold text-slate-900 dark:text-slate-100">
+                  Experience entry
+                </p>
+                <span className="text-xs text-slate-600 dark:text-slate-300">
+                  Populates <code className="font-mono">experience[0]</code>
+                </span>
+              </div>
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                <label className="flex flex-col gap-1 text-sm text-slate-700 dark:text-slate-200">
+                  Role / Title
+                  <input
+                    required
+                    value={formState.role}
+                    onChange={(event) => updateFormField("role")(event.target.value)}
+                    className="rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 px-3 py-2 text-sm text-slate-900 dark:text-slate-100 shadow-inner"
+                    placeholder="Senior Software Engineer"
+                  />
+                </label>
+                <label className="flex flex-col gap-1 text-sm text-slate-700 dark:text-slate-200">
+                  Company / Organization
+                  <input
+                    required
+                    value={formState.company}
+                    onChange={(event) => updateFormField("company")(event.target.value)}
+                    className="rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 px-3 py-2 text-sm text-slate-900 dark:text-slate-100 shadow-inner"
+                    placeholder="Analytical Engines"
+                  />
+                </label>
+              </div>
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                <label className="flex flex-col gap-1 text-sm text-slate-700 dark:text-slate-200">
+                  Start date (optional)
+                  <input
+                    value={formState.startDate}
+                    onChange={(event) => updateFormField("startDate")(event.target.value)}
+                    className="rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 px-3 py-2 text-sm text-slate-900 dark:text-slate-100 shadow-inner"
+                    placeholder="2021-01"
+                  />
+                </label>
+                <label className="flex flex-col gap-1 text-sm text-slate-700 dark:text-slate-200">
+                  End date (optional)
+                  <input
+                    value={formState.endDate}
+                    onChange={(event) => updateFormField("endDate")(event.target.value)}
+                    className="rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 px-3 py-2 text-sm text-slate-900 dark:text-slate-100 shadow-inner"
+                    placeholder="2024-06 or Present"
+                  />
+                </label>
+              </div>
+              <label className="flex flex-col gap-1 text-sm text-slate-700 dark:text-slate-200">
+                Achievements (optional)
+                <textarea
+                  value={formState.achievements}
+                  onChange={(event) => updateFormField("achievements")(event.target.value)}
+                  className="rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 px-3 py-2 text-sm text-slate-900 dark:text-slate-100 shadow-inner min-h-[120px]"
+                  placeholder={`Lead engineer for X\nImproved system reliability by 20%\nMentored junior developers`}
+                />
+                <span className="text-xs text-slate-500 dark:text-slate-400">
+                  One bullet per line; mapped to <code className="font-mono">experience[0].achievements</code>.
+                </span>
+              </label>
+            </div>
 
             {error && (
               <div className="rounded-lg border border-amber-200 bg-amber-50 dark:bg-amber-950 dark:border-amber-800 px-3 py-2 text-sm text-amber-900 dark:text-amber-100">
