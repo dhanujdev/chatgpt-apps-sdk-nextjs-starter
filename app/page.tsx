@@ -22,6 +22,15 @@ type ResumeFormState = {
   pdfUrl: string | null;
 };
 
+type ResumeToolResponse = {
+  result?: {
+    structuredContent?: {
+      previewHtml?: string;
+      pdfUrl?: string;
+    };
+  };
+};
+
 const DEFAULT_RESUME_STATE: ResumeFormState = {
   name: "",
   role: "",
@@ -65,6 +74,13 @@ export default function Home() {
     setError(null);
     setIsSubmitting(true);
 
+    // Clear the previous output so the UI reflects the new pending request.
+    setResumeState((previous) => ({
+      ...(previous ?? DEFAULT_RESUME_STATE),
+      previewHtml: null,
+      pdfUrl: null,
+    }));
+
     try {
       const parsedBulletPoints = formState.bulletPoints
         .split(/\r?\n/)
@@ -83,14 +99,7 @@ export default function Home() {
         return;
       }
 
-      const structuredContent = (response as unknown as {
-        result?: {
-          structuredContent?: {
-            previewHtml?: string;
-            pdfUrl?: string;
-          };
-        };
-      })?.result?.structuredContent;
+      const structuredContent = (response as ResumeToolResponse)?.result?.structuredContent;
 
       if (!structuredContent) {
         setError("Resume generation did not return structured content.");
