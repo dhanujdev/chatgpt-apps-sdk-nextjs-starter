@@ -1,17 +1,15 @@
 "use client";
 
-import { FormEvent, useMemo, useState } from "react";
-import Image from "next/image";
+import { FormEvent, useCallback, useMemo, useState } from "react";
 import Link from "next/link";
-import { useCallback, useMemo, useState } from "react";
 import {
   useWidgetProps,
   useMaxHeight,
   useDisplayMode,
   useRequestDisplayMode,
-  useIsChatGptApp,
   useCallTool,
   useWidgetState,
+  useOpenExternal,
 } from "./hooks";
 
 type ResumeFormState = {
@@ -39,9 +37,7 @@ const DEFAULT_RESUME_STATE: ResumeFormState = {
   bulletPoints: "",
   previewHtml: null,
   pdfUrl: null,
-  useOpenExternal,
-  useCallTool,
-} from "./hooks";
+};
 
 type PreviewWidgetProps = {
   previewHtml?: string;
@@ -57,18 +53,57 @@ export default function Home() {
   const maxHeight = useMaxHeight() ?? undefined;
   const displayMode = useDisplayMode();
   const requestDisplayMode = useRequestDisplayMode();
-  const isChatGptApp = useIsChatGptApp();
   const callTool = useCallTool();
+  const openExternal = useOpenExternal();
   const [resumeState, setResumeState] = useWidgetState<ResumeFormState>(
-    DEFAULT_RESUME_STATE
+    () => ({
+      ...DEFAULT_RESUME_STATE,
+      previewHtml: previewHtml ?? null,
+      pdfUrl: pdfUrl ?? null,
+    })
   );
   const [isSubmitting, setIsSubmitting] = useState(false);
+  const [isRegenerating, setIsRegenerating] = useState(false);
   const [error, setError] = useState<string | null>(null);
-
-  const name = toolOutput?.result?.structuredContent?.name || toolOutput?.name;
   const formState = useMemo(
     () => resumeState ?? DEFAULT_RESUME_STATE,
     [resumeState]
+  );
+
+  const formattedCompiledAt = useMemo(() => {
+    if (!compiledAt) {
+      return null;
+    }
+
+    const date = new Date(compiledAt);
+    return Number.isNaN(date.getTime())
+      ? compiledAt
+      : date.toLocaleString();
+  }, [compiledAt]);
+
+  const applyResumeResponse = useCallback(
+    (response: ResumeToolResponse | null) => {
+      if (!response) {
+        setError("Tool invocation is unavailable in this environment.");
+        return false;
+      }
+
+      const structuredContent = response.result?.structuredContent;
+
+      if (!structuredContent) {
+        setError("Resume generation did not return structured content.");
+        return false;
+      }
+
+      setResumeState((previous) => ({
+        ...(previous ?? DEFAULT_RESUME_STATE),
+        previewHtml: structuredContent.previewHtml ?? null,
+        pdfUrl: structuredContent.pdfUrl ?? null,
+      }));
+
+      return true;
+    },
+    [setResumeState]
   );
 
   const updateFormField = <K extends keyof ResumeFormState>(key: K) =>
@@ -96,30 +131,14 @@ export default function Home() {
         .map((line) => line.trim())
         .filter(Boolean);
 
-      const response = await callTool("generate_resume", {
+      const response = (await callTool("generate_resume", {
         name: formState.name,
         role: formState.role,
         summary: formState.summary,
         bulletPoints: parsedBulletPoints,
-      });
+      })) as ResumeToolResponse | null;
 
-      if (!response) {
-        setError("Tool invocation is unavailable in this environment.");
-        return;
-      }
-
-      const structuredContent = (response as ResumeToolResponse)?.result?.structuredContent;
-
-      if (!structuredContent) {
-        setError("Resume generation did not return structured content.");
-        return;
-      }
-
-      setResumeState((previous) => ({
-        ...(previous ?? DEFAULT_RESUME_STATE),
-        previewHtml: structuredContent.previewHtml ?? null,
-        pdfUrl: structuredContent.pdfUrl ?? null,
-      }));
+      applyResumeResponse(response);
     } catch (err) {
       console.error(err);
       setError("Failed to generate resume. Please try again.");
@@ -127,6 +146,36 @@ export default function Home() {
       setIsSubmitting(false);
     }
   };
+
+  const handleOpenExternal = useCallback(() => {
+    if (!formState.pdfUrl) {
+      return;
+    }
+
+    openExternal(formState.pdfUrl);
+  }, [formState.pdfUrl, openExternal]);
+
+  const handleRegenerate = useCallback(async () => {
+    if (!toolName || !toolArgs) {
+      return;
+    }
+
+    setError(null);
+    setIsRegenerating(true);
+
+    try {
+      const response = (await callTool(toolName, toolArgs)) as
+        | ResumeToolResponse
+        | null;
+
+      applyResumeResponse(response);
+    } catch (err) {
+      console.error(err);
+      setError("Failed to regenerate resume. Please try again.");
+    } finally {
+      setIsRegenerating(false);
+    }
+  }, [applyResumeResponse, callTool, toolArgs, toolName]);
 
   return (
     <div
@@ -177,27 +226,27 @@ export default function Home() {
           <div className="flex flex-wrap gap-2">
             <a
               className={`inline-flex items-center justify-center rounded-lg border border-slate-300 bg-white px-4 py-2 text-sm font-medium text-slate-800 shadow-sm transition hover:bg-slate-50 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-100 dark:hover:bg-slate-800 ${
-                pdfUrl ? "" : "pointer-events-none opacity-60"
+                formState.pdfUrl ? "" : "pointer-events-none opacity-60"
               }`}
-              href={pdfUrl || "#"}
+              href={formState.pdfUrl || "#"}
               target="_blank"
               rel="noopener noreferrer"
-              download={pdfUrl ? "" : undefined}
-              aria-disabled={!pdfUrl}
+              download={formState.pdfUrl ? "" : undefined}
+              aria-disabled={!formState.pdfUrl}
             >
               Download PDF
             </a>
             <button
               className="inline-flex items-center justify-center rounded-lg border border-slate-300 bg-white px-4 py-2 text-sm font-medium text-slate-800 shadow-sm transition hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-60 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-100 dark:hover:bg-slate-800"
               onClick={handleOpenExternal}
-              disabled={!pdfUrl}
+              disabled={!formState.pdfUrl}
             >
               Open in new tab
             </button>
             <button
               className="inline-flex items-center justify-center rounded-lg bg-slate-900 px-4 py-2 text-sm font-medium text-white shadow-sm transition hover:bg-slate-800 disabled:cursor-not-allowed disabled:opacity-60 dark:bg-slate-100 dark:text-slate-900 dark:hover:bg-slate-200"
               onClick={handleRegenerate}
-              disabled={!toolName || isRegenerating}
+              disabled={!toolName || !toolArgs || isRegenerating}
             >
               {isRegenerating ? "Regenerating..." : "Regenerate"}
             </button>
