@@ -15,6 +15,16 @@ import {
   useOpenExternal,
 } from "./hooks";
 
+type PreviewWidgetProps = {
+  previewHtml?: string;
+  pdfUrl?: string;
+  metadata?: {
+    generatedAt?: string;
+    latexLength?: number;
+  };
+  toolArgs?: Record<string, unknown>;
+};
+
 type ResumeFormState = {
   name: string;
   email: string;
@@ -29,6 +39,7 @@ type ResumeFormState = {
   previewHtml: string | null;
   pdfUrl: string | null;
   compiledAt: string | null;
+  lastArgs: Record<string, unknown> | null;
 };
 
 type ResumeToolResponse = {
@@ -38,6 +49,15 @@ type ResumeToolResponse = {
       pdfUrl?: string;
       metadata?: {
         generatedAt?: string;
+        latexLength?: number;
+      };
+    };
+  };
+};
+
+type StructuredResumeContent = ResumeToolResponse["result"] extends undefined
+  ? undefined
+  : NonNullable<ResumeToolResponse["result"]>["structuredContent"];
       };
     };
   };
@@ -82,6 +102,27 @@ const parseList = (value: string, separator: RegExp) =>
     .filter(Boolean);
 
 export default function Home() {
+  const toolOutput = useWidgetProps<PreviewWidgetProps>({});
+  const initialFormState = useMemo<ResumeFormState>(
+    () => ({
+      name: "",
+      role: "",
+      summary: "",
+      bulletPoints: "",
+      previewHtml: toolOutput?.previewHtml ?? null,
+      pdfUrl: toolOutput?.pdfUrl ?? null,
+      compiledAt: toolOutput?.metadata?.generatedAt ?? null,
+      lastArgs: toolOutput?.toolArgs ?? null,
+    }),
+    [
+      toolOutput?.metadata?.generatedAt,
+      toolOutput?.pdfUrl,
+      toolOutput?.previewHtml,
+      toolOutput?.toolArgs,
+    ]
+  );
+
+  const [resumeState, setResumeState] = useWidgetState<ResumeFormState>(initialFormState);
   const widgetProps = useWidgetProps<PreviewWidgetProps>({});
   const maxHeight = useMaxHeight() ?? undefined;
   const displayMode = useDisplayMode();
@@ -105,6 +146,20 @@ export default function Home() {
   const [isRegenerating, setIsRegenerating] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
+  const displayMode = useDisplayMode();
+  const requestDisplayMode = useRequestDisplayMode();
+  const maxHeight = useMaxHeight() ?? undefined;
+  const callTool = useCallTool();
+  const openExternal = useOpenExternal();
+
+  const formState = resumeState ?? initialFormState;
+
+  const formattedCompiledAt = useMemo(
+    () =>
+      formState.compiledAt
+        ? new Date(formState.compiledAt).toLocaleString()
+        : null,
+    [formState.compiledAt]
   const formState = useMemo(
     () => resumeState ?? DEFAULT_RESUME_STATE,
     [resumeState]
@@ -156,15 +211,53 @@ export default function Home() {
     <K extends keyof ResumeFormState>(key: K) =>
     (value: ResumeFormState[K]) =>
       setResumeState((previous) => ({
-        ...(previous ?? DEFAULT_RESUME_STATE),
+        ...(previous ?? initialFormState),
         [key]: value,
       }));
+
+  const applyToolResponse = (
+    structuredContent: StructuredResumeContent,
+    lastArgs: Record<string, unknown>
+  ) => {
+    if (!structuredContent) {
+      setError("Resume generation did not return structured content.");
+      return;
+    }
+
+    setResumeState((previous) => ({
+      ...(previous ?? initialFormState),
+      previewHtml: structuredContent.previewHtml ?? null,
+      pdfUrl: structuredContent.pdfUrl ?? null,
+      compiledAt:
+        structuredContent.metadata?.generatedAt ?? new Date().toISOString(),
+      lastArgs,
+    }));
+  };
 
   const handleSubmit = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
     setError(null);
     setIsSubmitting(true);
 
+    const parsedBulletPoints = formState.bulletPoints
+      .split(/\r?\n/)
+      .map((line) => line.trim())
+      .filter(Boolean);
+
+    const args: Record<string, unknown> = {
+      name: formState.name,
+      headline: formState.role,
+      summary: formState.summary,
+      experience: parsedBulletPoints.length
+        ? [
+            {
+              company: "Experience",
+              role: formState.role || "Role",
+              achievements: parsedBulletPoints,
+            },
+          ]
+        : undefined,
+    };
     setResumeState((previous) => ({
       ...(previous ?? DEFAULT_RESUME_STATE),
       previewHtml: null,
@@ -202,18 +295,17 @@ export default function Home() {
       applyResumeResponse(response);
       const response = await callTool("generate_resume", payload);
 
+    try {
+      const response = await callTool("generate_resume", args);
       if (!response) {
         setError("Tool invocation is unavailable in this environment.");
         return;
       }
 
-      const structuredContent = (response as ResumeToolResponse)?.result?.structuredContent;
+      const structuredContent = (response as ResumeToolResponse | null)?.result
+        ?.structuredContent;
 
-      if (!structuredContent) {
-        setError("Resume generation did not return structured content.");
-        return;
-      }
-
+      applyToolResponse(structuredContent, args);
       setResumeState((previous) => ({
         ...(previous ?? DEFAULT_RESUME_STATE),
         previewHtml: structuredContent.previewHtml ?? null,
@@ -228,6 +320,24 @@ export default function Home() {
       setError("Failed to generate resume. Please try again.");
     } finally {
       setIsSubmitting(false);
+    }
+  };
+
+  const handleRegenerate = async () => {
+    if (!formState.lastArgs) return;
+
+    setError(null);
+    setIsRegenerating(true);
+    try {
+      const response = await callTool("generate_resume", formState.lastArgs);
+      const structuredContent = (response as ResumeToolResponse | null)?.result
+        ?.structuredContent;
+      applyToolResponse(structuredContent, formState.lastArgs);
+    } catch (err) {
+      console.error(err);
+      setError("Unable to regenerate the resume right now.");
+    } finally {
+      setIsRegenerating(false);
     }
   };
 
@@ -301,14 +411,14 @@ export default function Home() {
         <div className="flex flex-col gap-2 sm:flex-row sm:items-end sm:justify-between">
           <div className="space-y-1">
             <p className="text-sm font-semibold uppercase tracking-wide text-slate-500 dark:text-slate-400">
-              Document preview
+              Resume Builder
             </p>
             <h1 className="text-2xl font-semibold text-slate-900 dark:text-slate-50">
-              Ready-to-share PDF and live HTML output
+              Compile polished resumes with live preview and PDF export
             </h1>
             {formattedCompiledAt && (
               <p className="text-sm text-slate-600 dark:text-slate-300">
-                Compiled at {formattedCompiledAt}
+                Updated {formattedCompiledAt}
               </p>
             )}
             <p className="text-sm text-slate-600 dark:text-slate-300">
@@ -335,14 +445,15 @@ export default function Home() {
               onClick={handleOpenExternal}
               disabled={!formState.pdfUrl}
             >
-              Open in new tab
+              Open PDF externally
             </button>
             <button
               className="inline-flex items-center justify-center rounded-lg bg-slate-900 px-4 py-2 text-sm font-medium text-white shadow-sm transition hover:bg-slate-800 disabled:cursor-not-allowed disabled:opacity-60 dark:bg-slate-100 dark:text-slate-900 dark:hover:bg-slate-200"
               onClick={handleRegenerate}
+              disabled={!formState.lastArgs || isRegenerating}
               disabled={!toolName || !toolArgs || isRegenerating}
             >
-              {isRegenerating ? "Regenerating..." : "Regenerate"}
+              {isRegenerating ? "Refreshing..." : "Regenerate preview"}
             </button>
           </div>
         </div>
@@ -351,9 +462,10 @@ export default function Home() {
           <div className="flex items-start justify-between gap-4 flex-wrap">
             <div>
               <p className="text-sm font-semibold text-slate-900 dark:text-slate-100">
-                Generate a resume preview
+                Describe your resume
               </p>
               <p className="text-sm text-slate-600 dark:text-slate-300">
+                Provide details for the <code className="font-mono">generate_resume</code> MCP tool to compile.
                 Provide the fields expected by the <code className="font-mono">generate_resume</code> MCP tool.
                 Roles and companies are mapped to the tool&apos;s <code className="font-mono">experience</code> array.
               </p>
@@ -376,6 +488,10 @@ export default function Home() {
                 />
               </label>
               <label className="flex flex-col gap-1 text-sm text-slate-700 dark:text-slate-200">
+                Headline or role
+                <input
+                  value={formState.role}
+                  onChange={(event) => updateFormField("role")(event.target.value)}
                 Email (optional)
                 <input
                   value={formState.email}
@@ -421,6 +537,16 @@ export default function Home() {
               />
             </label>
 
+            <label className="flex flex-col gap-1 text-sm text-slate-700 dark:text-slate-200">
+              Key achievements
+              <textarea
+                value={formState.bulletPoints}
+                onChange={(event) => updateFormField("bulletPoints")(event.target.value)}
+                className="rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 px-3 py-2 text-sm text-slate-900 dark:text-slate-100 shadow-inner min-h-[120px]"
+                placeholder={`Shipped X feature with 20% impact\nMentored 3 engineers\nBuilt internal tooling to speed delivery`}
+              />
+              <span className="text-xs text-slate-500 dark:text-slate-400">One achievement per line.</span>
+            </label>
             <div className="space-y-3 rounded-lg border border-slate-200 dark:border-slate-800 p-4">
               <div className="flex items-center justify-between gap-2">
                 <p className="text-sm font-semibold text-slate-900 dark:text-slate-100">
@@ -511,7 +637,7 @@ export default function Home() {
           {(formState.previewHtml || formState.pdfUrl) && (
             <div className="mt-6 space-y-3">
               <p className="text-sm font-semibold text-slate-900 dark:text-slate-100">
-                Preview
+                Rendered preview
               </p>
               {formState.previewHtml && (
                 <div
