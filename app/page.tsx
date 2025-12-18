@@ -1,30 +1,62 @@
 "use client";
 
-import Image from "next/image";
-import Link from "next/link";
+import { useCallback, useMemo, useState } from "react";
 import {
   useWidgetProps,
   useMaxHeight,
   useDisplayMode,
   useRequestDisplayMode,
-  useIsChatGptApp,
+  useOpenExternal,
+  useCallTool,
 } from "./hooks";
 
+type PreviewWidgetProps = {
+  previewHtml?: string;
+  pdfUrl?: string;
+  compiledAt?: string;
+  toolName?: string;
+  toolArgs?: Record<string, unknown>;
+};
+
 export default function Home() {
-  const toolOutput = useWidgetProps<{
-    name?: string;
-    result?: { structuredContent?: { name?: string } };
-  }>();
+  const { previewHtml, pdfUrl, compiledAt, toolName, toolArgs } =
+    useWidgetProps<PreviewWidgetProps>({});
   const maxHeight = useMaxHeight() ?? undefined;
   const displayMode = useDisplayMode();
   const requestDisplayMode = useRequestDisplayMode();
-  const isChatGptApp = useIsChatGptApp();
+  const openExternal = useOpenExternal();
+  const callTool = useCallTool();
+  const [isRegenerating, setIsRegenerating] = useState(false);
 
-  const name = toolOutput?.result?.structuredContent?.name || toolOutput?.name;
+  const formattedCompiledAt = useMemo(
+    () => (compiledAt ? new Date(compiledAt).toLocaleString() : null),
+    [compiledAt]
+  );
+
+  const handleOpenExternal = useCallback(() => {
+    if (pdfUrl) {
+      openExternal(pdfUrl);
+    }
+  }, [openExternal, pdfUrl]);
+
+  const handleRegenerate = useCallback(async () => {
+    if (!toolName) {
+      return;
+    }
+
+    setIsRegenerating(true);
+    try {
+      await callTool(toolName, toolArgs ?? {});
+    } catch (error) {
+      console.error("Failed to regenerate preview", error);
+    } finally {
+      setIsRegenerating(false);
+    }
+  }, [callTool, toolArgs, toolName]);
 
   return (
     <div
-      className="font-sans grid grid-rows-[20px_1fr_20px] items-center justify-items-center p-8 pb-20 gap-16 sm:p-20"
+      className="font-sans grid grid-rows-[20px_1fr_20px] items-center justify-items-center p-8 pb-20 gap-10 sm:p-16"
       style={{
         maxHeight,
         height: displayMode === "fullscreen" ? maxHeight : undefined,
@@ -52,76 +84,74 @@ export default function Home() {
           </svg>
         </button>
       )}
-      <main className="flex flex-col gap-[32px] row-start-2 items-center sm:items-start">
-        {!isChatGptApp && (
-          <div className="bg-blue-50 dark:bg-blue-950 border border-blue-200 dark:border-blue-800 rounded-lg px-4 py-3 w-full">
-            <div className="flex items-center gap-3">
-              <svg
-                className="w-5 h-5 text-blue-600 dark:text-blue-400 flex-shrink-0"
-                fill="currentColor"
-                viewBox="0 0 20 20"
-                aria-hidden="true"
-              >
-                <path
-                  fillRule="evenodd"
-                  d="M18 10a8 8 0 11-16 0 8 8 0 0116 0zm-7-4a1 1 0 11-2 0 1 1 0 012 0zM9 9a.75.75 0 000 1.5h.253a.25.25 0 01.244.304l-.459 2.066A1.75 1.75 0 0010.747 15H11a.75.75 0 000-1.5h-.253a.25.25 0 01-.244-.304l.459-2.066A1.75 1.75 0 009.253 9H9z"
-                  clipRule="evenodd"
-                />
-              </svg>
-              <div className="flex-1 min-w-0">
-                <p className="text-sm text-blue-900 dark:text-blue-100 font-medium">
-                  This app relies on data from a ChatGPT session.
-                </p>
-                <p className="text-sm text-blue-900 dark:text-blue-100 font-medium">
-                  No{" "}
-                  <a
-                    href="https://developers.openai.com/apps-sdk/reference"
-                    target="_blank"
-                    rel="noopener noreferrer"
-                    className="underline hover:no-underline font-mono bg-blue-100 dark:bg-blue-900 px-1 py-0.5 rounded"
-                  >
-                    window.openai
-                  </a>{" "}
-                  property detected
-                </p>
-              </div>
-            </div>
-          </div>
-        )}
-        <Image
-          className="dark:invert"
-          src="/next.svg"
-          alt="Next.js logo"
-          width={180}
-          height={38}
-          priority
-        />
-        <ol className="font-mono list-inside list-decimal text-sm/6 text-center sm:text-left">
-          <li className="mb-2 tracking-[-.01em]">
-            Welcome to the ChatGPT Apps SDK Next.js Starter
-          </li>
-          <li className="mb-2 tracking-[-.01em]">
-            Name returned from tool call: {name ?? "..."}
-          </li>
-          <li className="mb-2 tracking-[-.01em]">MCP server path: /mcp</li>
-        </ol>
 
-        <div className="flex gap-4 items-center flex-col sm:flex-row">
-          <Link
-            className="rounded-full border border-solid border-transparent transition-colors flex items-center justify-center bg-foreground text-background gap-2 hover:bg-[#383838] dark:hover:bg-[#ccc] font-medium text-sm sm:text-base h-10 sm:h-12 px-4 sm:px-5 sm:w-auto"
-            prefetch={false}
-            href="/custom-page"
-          >
-            Visit another page
-          </Link>
-          <a
-            href="https://vercel.com/templates/ai/chatgpt-app-with-next-js"
-            target="_blank"
-            rel="noopener noreferrer"
-            className="underline"
-          >
-            Deploy on Vercel
-          </a>
+      <main className="row-start-2 flex w-full max-w-5xl flex-col gap-6">
+        <div className="flex flex-col gap-2 sm:flex-row sm:items-end sm:justify-between">
+          <div className="space-y-1">
+            <p className="text-sm font-semibold uppercase tracking-wide text-slate-500 dark:text-slate-400">
+              Document preview
+            </p>
+            <h1 className="text-2xl font-semibold text-slate-900 dark:text-slate-50">
+              Ready-to-share PDF and live HTML output
+            </h1>
+            {formattedCompiledAt && (
+              <p className="text-sm text-slate-600 dark:text-slate-300">
+                Compiled at {formattedCompiledAt}
+              </p>
+            )}
+          </div>
+          <div className="flex flex-wrap gap-2">
+            <a
+              className={`inline-flex items-center justify-center rounded-lg border border-slate-300 bg-white px-4 py-2 text-sm font-medium text-slate-800 shadow-sm transition hover:bg-slate-50 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-100 dark:hover:bg-slate-800 ${
+                pdfUrl ? "" : "pointer-events-none opacity-60"
+              }`}
+              href={pdfUrl || "#"}
+              target="_blank"
+              rel="noopener noreferrer"
+              download={pdfUrl ? "" : undefined}
+              aria-disabled={!pdfUrl}
+            >
+              Download PDF
+            </a>
+            <button
+              className="inline-flex items-center justify-center rounded-lg border border-slate-300 bg-white px-4 py-2 text-sm font-medium text-slate-800 shadow-sm transition hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-60 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-100 dark:hover:bg-slate-800"
+              onClick={handleOpenExternal}
+              disabled={!pdfUrl}
+            >
+              Open in new tab
+            </button>
+            <button
+              className="inline-flex items-center justify-center rounded-lg bg-slate-900 px-4 py-2 text-sm font-medium text-white shadow-sm transition hover:bg-slate-800 disabled:cursor-not-allowed disabled:opacity-60 dark:bg-slate-100 dark:text-slate-900 dark:hover:bg-slate-200"
+              onClick={handleRegenerate}
+              disabled={!toolName || isRegenerating}
+            >
+              {isRegenerating ? "Regenerating..." : "Regenerate"}
+            </button>
+          </div>
+        </div>
+
+        <div
+          className="relative w-full overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm dark:border-slate-800 dark:bg-slate-900"
+          style={{ maxHeight }}
+        >
+          {previewHtml ? (
+            <div
+              className="w-full overflow-auto"
+              style={{
+                maxHeight:
+                  maxHeight !== undefined ? Math.max(maxHeight - 160, 240) : undefined,
+              }}
+            >
+              <div
+                className="prose prose-sm max-w-none p-6 dark:prose-invert"
+                dangerouslySetInnerHTML={{ __html: previewHtml }}
+              />
+            </div>
+          ) : (
+            <div className="flex min-h-[320px] items-center justify-center p-8 text-sm text-slate-600 dark:text-slate-300">
+              Waiting for trusted preview content from the tool...
+            </div>
+          )}
         </div>
       </main>
     </div>
