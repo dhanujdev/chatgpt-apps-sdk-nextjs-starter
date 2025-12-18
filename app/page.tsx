@@ -1,5 +1,6 @@
 "use client";
 
+import { FormEvent, useCallback, useMemo, useState } from "react";
 import { FormEvent, useMemo, useState } from "react";
 import Link from "next/link";
 import {
@@ -8,8 +9,10 @@ import {
   useMaxHeight,
   useOpenExternal,
   useRequestDisplayMode,
+  useCallTool,
   useWidgetProps,
   useWidgetState,
+  useOpenExternal,
 } from "./hooks";
 
 type ResumeFormState = {
@@ -61,6 +64,14 @@ const DEFAULT_RESUME_STATE: ResumeFormState = {
   achievements: "",
   previewHtml: null,
   pdfUrl: null,
+};
+
+type PreviewWidgetProps = {
+  previewHtml?: string;
+  pdfUrl?: string;
+  compiledAt?: string;
+  toolName?: string;
+  toolArgs?: Record<string, unknown>;
   compiledAt: null,
 };
 
@@ -77,6 +88,13 @@ export default function Home() {
   const requestDisplayMode = useRequestDisplayMode();
   const callTool = useCallTool();
   const openExternal = useOpenExternal();
+  const [resumeState, setResumeState] = useWidgetState<ResumeFormState>(
+    () => ({
+      ...DEFAULT_RESUME_STATE,
+      previewHtml: previewHtml ?? null,
+      pdfUrl: pdfUrl ?? null,
+    })
+  );
   const [resumeState, setResumeState] = useWidgetState<ResumeFormState>(() => ({
     ...DEFAULT_RESUME_STATE,
     previewHtml: widgetProps.previewHtml ?? DEFAULT_RESUME_STATE.previewHtml,
@@ -84,6 +102,7 @@ export default function Home() {
     compiledAt: widgetProps.metadata?.generatedAt ?? DEFAULT_RESUME_STATE.compiledAt,
   }));
   const [isSubmitting, setIsSubmitting] = useState(false);
+  const [isRegenerating, setIsRegenerating] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   const formState = useMemo(
@@ -92,6 +111,42 @@ export default function Home() {
   );
 
   const formattedCompiledAt = useMemo(() => {
+    if (!compiledAt) {
+      return null;
+    }
+
+    const date = new Date(compiledAt);
+    return Number.isNaN(date.getTime())
+      ? compiledAt
+      : date.toLocaleString();
+  }, [compiledAt]);
+
+  const applyResumeResponse = useCallback(
+    (response: ResumeToolResponse | null) => {
+      if (!response) {
+        setError("Tool invocation is unavailable in this environment.");
+        return false;
+      }
+
+      const structuredContent = response.result?.structuredContent;
+
+      if (!structuredContent) {
+        setError("Resume generation did not return structured content.");
+        return false;
+      }
+
+      setResumeState((previous) => ({
+        ...(previous ?? DEFAULT_RESUME_STATE),
+        previewHtml: structuredContent.previewHtml ?? null,
+        pdfUrl: structuredContent.pdfUrl ?? null,
+      }));
+
+      return true;
+    },
+    [setResumeState]
+  );
+
+  const updateFormField = <K extends keyof ResumeFormState>(key: K) =>
     if (!formState.compiledAt) return null;
     const compiledDate = new Date(formState.compiledAt);
     return compiledDate.toLocaleString();
@@ -137,6 +192,14 @@ export default function Home() {
         ],
       };
 
+      const response = (await callTool("generate_resume", {
+        name: formState.name,
+        role: formState.role,
+        summary: formState.summary,
+        bulletPoints: parsedBulletPoints,
+      })) as ResumeToolResponse | null;
+
+      applyResumeResponse(response);
       const response = await callTool("generate_resume", payload);
 
       if (!response) {
@@ -168,6 +231,35 @@ export default function Home() {
     }
   };
 
+  const handleOpenExternal = useCallback(() => {
+    if (!formState.pdfUrl) {
+      return;
+    }
+
+    openExternal(formState.pdfUrl);
+  }, [formState.pdfUrl, openExternal]);
+
+  const handleRegenerate = useCallback(async () => {
+    if (!toolName || !toolArgs) {
+      return;
+    }
+
+    setError(null);
+    setIsRegenerating(true);
+
+    try {
+      const response = (await callTool(toolName, toolArgs)) as
+        | ResumeToolResponse
+        | null;
+
+      applyResumeResponse(response);
+    } catch (err) {
+      console.error(err);
+      setError("Failed to regenerate resume. Please try again.");
+    } finally {
+      setIsRegenerating(false);
+    }
+  }, [applyResumeResponse, callTool, toolArgs, toolName]);
   const handleOpenExternal = () => {
     if (formState.pdfUrl) {
       openExternal(formState.pdfUrl);
@@ -244,6 +336,13 @@ export default function Home() {
               disabled={!formState.pdfUrl}
             >
               Open in new tab
+            </button>
+            <button
+              className="inline-flex items-center justify-center rounded-lg bg-slate-900 px-4 py-2 text-sm font-medium text-white shadow-sm transition hover:bg-slate-800 disabled:cursor-not-allowed disabled:opacity-60 dark:bg-slate-100 dark:text-slate-900 dark:hover:bg-slate-200"
+              onClick={handleRegenerate}
+              disabled={!toolName || !toolArgs || isRegenerating}
+            >
+              {isRegenerating ? "Regenerating..." : "Regenerate"}
             </button>
           </div>
         </div>
