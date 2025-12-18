@@ -58,14 +58,14 @@ export function useWidgetState<T extends UnknownObject>(
       _setWidgetState((prevState) => {
         const newState = typeof state === "function" ? state(prevState) : state;
 
-        if (newState != null) {
+        if (typeof window !== "undefined" && newState != null) {
           window.openai.setWidgetState(newState);
         }
 
         return newState;
       });
     },
-    [window.openai.setWidgetState]
+    []
   );
 
   return [widgetState, setWidgetState] as const;
