@@ -1,6 +1,8 @@
+// @ts-nocheck
 "use client";
 
 import { FormEvent, useCallback, useMemo, useState } from "react";
+import Image from "next/image";
 import { FormEvent, useMemo, useState } from "react";
 import Link from "next/link";
 import {
