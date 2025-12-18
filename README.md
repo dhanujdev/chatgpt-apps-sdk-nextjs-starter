@@ -110,6 +110,12 @@ http://localhost:3000/mcp
 
 **Note:** Connecting MCP servers to ChatGPT requires developer mode access. See the [connection guide](https://developers.openai.com/apps-sdk/deploy/connect-chatgpt) for setup instructions.
 
+### Preview vs. Production MCP endpoints
+
+- **Preview deployments:** Point ChatGPT at `https://<branch>.vercel.app/mcp` (the Vercel branch/preview URL) while testing feature branches. Add the preview domain to your ChatGPT Connectors allowlist (**Settings → Connectors → Manage allowlist**) so ChatGPT can reach it.
+- **Production:** After promotion, update the connector to use `https://<prod>.vercel.app/mcp` and allowlist the production hostname so ChatGPT continues to connect after the preview is cleaned up.
+- **Custom domains:** `baseUrl.ts` automatically picks Vercel preview URLs (`VERCEL_BRANCH_URL` / `VERCEL_URL`) and the production Vercel host (`VERCEL_PROJECT_PRODUCTION_URL`). If your production setup relies on a custom domain, set `NEXT_PUBLIC_BASE_URL` (or `BASE_URL` for server-only overrides) to the fully qualified origin (e.g., `https://example.com`) so asset loading and SDK bootstrapping use the correct host.
+
 
 ## Project Structure
 
