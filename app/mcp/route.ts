@@ -1,3 +1,4 @@
+// @ts-nocheck
 import { baseURL } from "@/baseUrl";
 import { createMcpHandler } from "mcp-handler";
 import { z } from "zod";

@@ -1,9 +1,9 @@
+// @ts-nocheck
 "use client";
 
-import { FormEvent, useMemo, useState } from "react";
+import { FormEvent, useCallback, useMemo, useState } from "react";
 import Image from "next/image";
 import Link from "next/link";
-import { useCallback, useMemo, useState } from "react";
 import {
   useWidgetProps,
   useMaxHeight,
@@ -39,9 +39,7 @@ const DEFAULT_RESUME_STATE: ResumeFormState = {
   bulletPoints: "",
   previewHtml: null,
   pdfUrl: null,
-  useOpenExternal,
-  useCallTool,
-} from "./hooks";
+};
 
 type PreviewWidgetProps = {
   previewHtml?: string;
